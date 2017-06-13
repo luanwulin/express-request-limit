@@ -10,5 +10,8 @@
     "express"
   ],
   "author": "luanwulin",
-  "license": "ISC"
+  "license": "ISC",
+  "dependencies": {
+    "lodash": "^4.17.4"
+  }
 }

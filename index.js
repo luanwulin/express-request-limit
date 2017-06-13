@@ -1,11 +1,11 @@
 'use strict';
+const _ = require('lodash');
 
-let Store = require("./lib/store");
+let Store = require("./lib/store"),
+    db;
 
 module.exports = function (app) {
     return function (opts) {
-
-        let db;
         switch (opts.cacheType) {
             case 'redis':
                 db = new Store.Redis();
@@ -17,9 +17,9 @@ module.exports = function (app) {
                 db = new Store.Session();
                 break;
         }
-
         let middleware = function (req, res, next) {
             if (opts.whitelist && opts.whitelist(req)) return next()
+
             opts.lookup = Array.isArray(opts.lookup) ? opts.lookup : [opts.lookup]
             opts.onRateLimited = typeof opts.onRateLimited === 'function' ? opts.onRateLimited : function (req, res, next) {
                     res.status(429).send('Rate limit exceeded')
@@ -31,7 +31,15 @@ module.exports = function (app) {
             }).join(':')
             let path = opts.path || req.path
             let method = (opts.method || req.method).toLowerCase()
+
+            db.refresh(_.extend({
+                req: req,
+                res: res,
+                next: next
+            }, opts))
+
             let key = 'ratelimit:' + path + ':' + method + ':' + lookups
+
             db.get(key, function (err, limit) {
                 if (err && opts.ignoreErrors) return next()
                 let now = Date.now()
