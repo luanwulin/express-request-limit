@@ -71,14 +71,13 @@ module.exports = function (app) {
                     return;
                 }
 
-                var count = 0,
-                    lastValidRequestTime = now,
-                    firstRequestTime = lastValidRequestTime;
+                var lastValidRequestTime = now,
+                    firstRequestTime = lastValidRequestTime,
+                    remaining = opts.total;
                 if (value) {
-                    count = value.count;
                     lastValidRequestTime = value.lastRequest.getTime();
                     firstRequestTime = value.firstRequest.getTime();
-
+                    remaining = value.remaining;
                     // var delayIndex = value.count - opts.freeRetries - 1;
                     // if (delayIndex >= 0) {
                     //     if (delayIndex < this.delays.length) {
@@ -95,19 +94,18 @@ module.exports = function (app) {
                     remainingLifetime = remainingLifetime - Math.floor((Date.now() - firstRequestTime) / 1000);
                     if (remainingLifetime < 1) {
                         // it should be expired alredy, treat this as a new request and reset everything
-                        count = 0;
                         nextValidRequestTime = firstRequestTime = lastValidRequestTime = now;
                         remainingLifetime = opts.lifetime || 0;
                     }
                 }
 
-                value.remaining = Math.max(Number(value.remaining + value.freeRetries) - 1, -1)
+                remaining = Math.max(Number(value.remaining + value.freeRetries) - 1, -1)
 
-                if (nextValidRequestTime >= now || value.remaining >= 0) {
+                if (nextValidRequestTime >= now || remaining >= 0) {
                     db.set(key, {
-                        count: count + 1,
                         lastRequest: new Date(now),
-                        firstRequest: new Date(firstRequestTime)
+                        firstRequest: new Date(firstRequestTime),
+                        remaining: remaining
                     }, remainingLifetime, (err) => {
                         if (err) {
                             opts.handleStoreError({
