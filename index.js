@@ -17,7 +17,7 @@ const defaultOpts = {
     }
 };
 
-const dbOptsKey = ['getKey', 'afterGet', 'afterSet', 'filterValue'];
+const dbOptsKey = ['getKey', 'afterGet', 'afterSet', 'filterValue', 'db'];
 
 module.exports = function (app) {
     return function (opts) {
