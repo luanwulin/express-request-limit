@@ -4,6 +4,18 @@ const _ = require('lodash');
 let Store = require("./lib/store"),
     db;
 
+const defaultOpts = {
+    lifetime: 100,
+    freeRetries: 2,
+    refreshTimeoutOnRequest: false,
+    minWait: 100,
+    total: 20,
+    whitelist: '',
+    handleStoreError: function (rs) {
+        throw new Error(rs.message);
+    }
+};
+
 module.exports = function (app) {
     return function (opts) {
         switch (opts.cacheType) {
@@ -32,7 +44,9 @@ module.exports = function (app) {
             let path = opts.path || req.path
             let method = (opts.method || req.method).toLowerCase()
 
-            db.refresh(_.extend({
+            let now = Date.now();
+
+            db.refresh(_.extend(defaultOpts, {
                 req: req,
                 res: res,
                 next: next
@@ -40,39 +54,79 @@ module.exports = function (app) {
 
             let key = 'ratelimit:' + path + ':' + method + ':' + lookups
 
-            db.get(key, function (err, limit) {
-                if (err && opts.ignoreErrors) return next()
-                let now = Date.now()
-                limit = limit ? JSON.parse(limit) : {
-                        total: opts.total,
-                        remaining: opts.total,
-                        reset: now + opts.expire
-                    }
-
-                if (now > limit.reset) {
-                    limit.reset = now + opts.expire
-                    limit.remaining = opts.total
+            db.get(key, (err, value) => {
+                if (err) {
+                    opts.handleStoreError({
+                        req: req,
+                        res: res,
+                        next: next,
+                        message: "Cannot get request count",
+                        parent: err
+                    });
+                    return;
                 }
 
-                // do not allow negative remaining
-                limit.remaining = Math.max(Number(limit.remaining) - 1, -1)
-                db.set(key, JSON.stringify(limit), opts.expire, function (e) {
-                    if (!opts.skipHeaders) {
-                        res.set('X-RateLimit-Limit', limit.total)
-                        res.set('X-RateLimit-Reset', Math.ceil(limit.reset / 1000)) // UTC epoch seconds
-                        res.set('X-RateLimit-Remaining', Math.max(limit.remaining, 0))
+                var count = 0,
+                    lastValidRequestTime = now,
+                    firstRequestTime = lastValidRequestTime;
+                if (value) {
+                    count = value.count;
+                    lastValidRequestTime = value.lastRequest.getTime();
+                    firstRequestTime = value.firstRequest.getTime();
+
+                    // var delayIndex = value.count - opts.freeRetries - 1;
+                    // if (delayIndex >= 0) {
+                    //     if (delayIndex < this.delays.length) {
+                    //         delay = this.delays[delayIndex];
+                    //     } else {
+                    //         delay = opts.maxWait;
+                    //     }
+                    // }
+                }
+                var nextValidRequestTime = lastValidRequestTime + opts.minWait,
+                    remainingLifetime = opts.lifetime || 0;
+
+                if (!opts.refreshTimeoutOnRequest && remainingLifetime > 0) {
+                    remainingLifetime = remainingLifetime - Math.floor((Date.now() - firstRequestTime) / 1000);
+                    if (remainingLifetime < 1) {
+                        // it should be expired alredy, treat this as a new request and reset everything
+                        count = 0;
+                        nextValidRequestTime = firstRequestTime = lastValidRequestTime = now;
+                        remainingLifetime = opts.lifetime || 0;
                     }
+                }
 
-                    if (limit.remaining >= 0) return next()
+                value.remaining = Math.max(Number(value.remaining + value.freeRetries) - 1, -1)
 
-                    let after = (limit.reset - Date.now()) / 1000
-
-                    if (!opts.skipHeaders) res.set('Retry-After', after)
-
-                    opts.onRateLimited(req, res, next)
-                })
-
-            })
+                if (nextValidRequestTime >= now || value.remaining >=0 ) {
+                    db.set(key, {
+                        count: count + 1,
+                        lastRequest: new Date(now),
+                        firstRequest: new Date(firstRequestTime)
+                    }, remainingLifetime, (err) => {
+                        if (err) {
+                            opts.handleStoreError({
+                                req: req,
+                                res: res,
+                                next: next,
+                                message: "Cannot increment request count",
+                                parent: err
+                            });
+                            return;
+                        }
+                        typeof next == 'function' && next();
+                    });
+                } else {
+                    if (!opts.skipHeaders) {
+                        res.set('X-RateLimit-Limit', value.total)
+                        res.set('X-RateLimit-Reset', Math.ceil((remainingLifetime + now) / 1000)) // UTC epoch seconds
+                        res.set('X-RateLimit-Remaining', remainingLifetime)
+                        res.set('Retry-After', remainingLifetime)
+                    }
+                    var failCallback = opts.onRateLimited();
+                    typeof failCallback === 'function' && failCallback(req, res, next, new Date(nextValidRequestTime));
+                }
+            });
         }
         if (typeof(opts.lookup) === 'function') {
             middleware = function (middleware, req, res, next) {
