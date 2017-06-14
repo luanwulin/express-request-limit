@@ -11,14 +11,17 @@ const defaultOpts = {
     minWait: 100,
     total: 20,
     whitelist: '',
+    cacheType: 'redis',
     handleStoreError: function (rs) {
         throw new Error(rs.message);
     }
 };
 
+const dbOptsKey = ['getKey', 'afterGet', 'afterSet', 'filterValue'];
+
 module.exports = function (app) {
     return function (opts) {
-        switch (opts.cacheType) {
+        switch (opts.cacheType.toLowerCase()) {
             case 'redis':
                 db = new Store.Redis();
                 break;
@@ -46,11 +49,13 @@ module.exports = function (app) {
 
             let now = Date.now();
 
-            db.refresh(_.extend(defaultOpts, {
+            let dbOpts = _.extend(defaultOpts, opts);
+
+            db.refresh(_.extend({
                 req: req,
                 res: res,
                 next: next
-            }, opts))
+            }, _.pick(dbOpts, dbOptsKey)));
 
             let key = 'ratelimit:' + path + ':' + method + ':' + lookups
 
@@ -98,7 +103,7 @@ module.exports = function (app) {
 
                 value.remaining = Math.max(Number(value.remaining + value.freeRetries) - 1, -1)
 
-                if (nextValidRequestTime >= now || value.remaining >=0 ) {
+                if (nextValidRequestTime >= now || value.remaining >= 0) {
                     db.set(key, {
                         count: count + 1,
                         lastRequest: new Date(now),
