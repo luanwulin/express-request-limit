@@ -1,6 +1,6 @@
 {
   "name": "express-request-throttle",
-  "version": "1.0.5",
+  "version": "1.0.21",
   "description": "express request limit",
   "main": "index.js",
   "scripts": {
